@@ -1,68 +1,12 @@
-import torch
-from torch import  autograd
-from torch import nn
-
-from matplotlib import pyplot as plt
-from matplotlib import gridspec
-from mpl_toolkits.axes_grid1 import make_axes_locatable
-from mpl_toolkits.mplot3d import Axes3D
-from matplotlib import ticker
-from sklearn.model_selection import train_test_split
-
 import numpy as np
-from pyDOE import lhs         #Latin Hypercube Sampling
-from scipy import io
-from scipy.stats import median_abs_deviation as MAD
-import pandas as pd
-import pickle as pkl
-from tqdm import tqdm
-from time import time
+from matplotlib import pyplot as plt
 import warnings
-from os.path import exists
-from os import makedirs, listdir, remove
 warnings.filterwarnings("ignore")
 try:plt.style.use('../figstyle.mplstyle')
 except:pass
-
-from PINNPDE import FCN
-
-
-'Complementary function'
-def plot3D(x,t,y):
-    x_plot =x.squeeze(1) 
-    t_plot =t.squeeze(1)
-    X,T= torch.meshgrid(x_plot,t_plot)
-    F_xt = y
-    fig,ax=plt.subplots(1,1)
-    cp = ax.contourf(T,X, F_xt,20,cmap="rainbow")
-    fig.colorbar(cp) # Add a colorbar to a plot
-    ax.set_title('F(x,t)')
-    ax.set_xlabel('t')
-    ax.set_ylabel('x')
-    plt.show()
-    ax = plt.axes(projection='3d')
-    ax.plot_surface(T.numpy(), X.numpy(), F_xt.numpy(),cmap="rainbow")
-    ax.set_xlabel('t')
-    ax.set_ylabel('x')
-    ax.set_zlabel('f(x,t)')
-    plt.show()
-
-def plot3D_Matrix(x,t,y):
-    X,T= x,t
-    F_xt = y
-    fig,ax=plt.subplots(1,1)
-    cp = ax.contourf(T,X, F_xt,20,cmap="rainbow")
-    fig.colorbar(cp) # Add a colorbar to a plot
-    ax.set_title('F(x,t)')
-    ax.set_xlabel('t')
-    ax.set_ylabel('x')
-    plt.show()
-    ax = plt.axes(projection='3d')
-    ax.plot_surface(T.numpy(), X.numpy(), F_xt.numpy(),cmap="rainbow")
-    ax.set_xlabel('t')
-    ax.set_ylabel('x')
-    ax.set_zlabel('f(x,t)')
-    plt.show()
+import torch
+from torch import autograd
+from pyDOE import lhs  
 
 'Initial set up'
 torch.manual_seed(1234)
@@ -104,8 +48,7 @@ def loss(model,x_BC,y_BC,x_PDE,lossBC,lossPDE,PDE):
     loss_pde=lossPDE(model,x_PDE,PDE)
     return loss_bc+loss_pde
 
-'Model'
-model = FCN(layers,loss,lr=lr,scheduler='MultiStepLR',argschedu={'gamma':0.1,'milestones':[5000,15000,30000,50000]})
+model = torch.load('Models/Helmoltz2D.model')
 
 'Gen Data'
 x=torch.linspace(xmin,xmax,total_points_x).view(-1,1)
@@ -149,19 +92,6 @@ X_train_Nf=lb+(ub-lb)*lhs(2,Nf) # 2 as the inputs are x and t
 X_train_Nf=torch.vstack((X_train_Nf,X_train_Nu)).float().to(model.device) #Add the training poinst to the collocation points
 X_test=x_test.float().to(model.device) # the input dataset (complete)
 Y_test=y_test.float().to(model.device)
-# y = torch.zeros_like(X_train_Nf.T)
-# index = torch.LongTensor([1,0])
-# y[index] = X_train_Nf.T
-# y = y.T
-# print(X_train_Nf,'\n',y)
-
-# print(X_train_Nu,Y_train_Nu)
-# fig = plt.figure()
-# ax = fig.add_subplot(projection='3d')
-# ax.scatter(X_test[:,0],X_test[:,1],Y_test)
-# plt.show()
-
-model.Train([X_train_Nu,Y_train_Nu,X_train_Nf,lossBC,lossPDE,PDE],Verbose=True,nEpochs=steps,nLoss=5000,Test=[X_test,Y_test])
 
 fig, ax = plt.subplots(1,figsize=(16,10))
 ax.plot(model.loss_history,color='b',ls='-',label='PDE')
@@ -177,10 +107,6 @@ arr_x1=x1.reshape(shape=[200,200]).transpose(1,0).detach().cpu()
 arr_T1=t1.reshape(shape=[200,200]).transpose(1,0).detach().cpu()
 arr_y1=y1.reshape(shape=[200,200]).transpose(1,0).detach().cpu()
 arr_y_test=y_test.reshape(shape=[200,200]).transpose(1,0).detach().cpu()
-
-model.save('Helmoltz2D')
-
-# plot3D_Matrix(arr_x1,arr_T1,arr_y1)
 
 ax = plt.axes(projection='3d')
 ax.plot_surface(arr_T1.numpy(), arr_x1.numpy(), arr_y1.numpy(),cmap="rainbow")
