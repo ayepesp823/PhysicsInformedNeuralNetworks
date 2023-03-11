@@ -108,18 +108,18 @@ for file in listdir('Models'):
         y1=model(X_test)
         x1=X_test[:,0]
         t1=X_test[:,1]
-        arr_x1=x1.reshape(shape=[200,200]).transpose(1,0).detach().cpu()
-        arr_T1=t1.reshape(shape=[200,200]).transpose(1,0).detach().cpu()
-        arr_y1=y1.reshape(shape=[200,200]).transpose(1,0).detach().cpu()
-        arr_y_test=y_test.reshape(shape=[200,200]).transpose(1,0).detach().cpu()
+        arr_x1=x1.reshape(shape=[total_points_x,total_points_t]).transpose(1,0).detach().cpu()
+        arr_T1=t1.reshape(shape=[total_points_x,total_points_t]).transpose(1,0).detach().cpu()
+        arr_y1=y1.reshape(shape=[total_points_x,total_points_t]).transpose(1,0).detach().cpu()
+        arr_y_test=y_test.reshape(shape=[total_points_x,total_points_t]).transpose(1,0).detach().cpu()
 
         ax = plt.axes(projection='3d')
         ax.plot_surface(arr_T1.numpy(), arr_x1.numpy(), arr_y1.numpy(),cmap="rainbow")
         ax.plot_surface(arr_T1.numpy(), arr_x1.numpy(), arr_y_test.numpy(),color='k')
         ax.scatter(X_train_Nu[:,0],X_train_Nu[:,1],Y_train_Nu,color='k')
-        ax.set_xlabel('t')
+        ax.set_xlabel('y')
         ax.set_ylabel('x')
-        ax.set_zlabel('f(x,t)')
+        ax.set_zlabel('f(x,y)')
         fig = plt.gcf()
 
         with open(f'Figures/Instances/{name}{n}.pkl','wb') as file:
