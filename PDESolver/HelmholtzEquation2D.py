@@ -17,6 +17,7 @@ import pandas as pd
 import pickle as pkl
 from tqdm import tqdm
 from time import time
+from os import listdir
 import warnings
 from os.path import exists
 from os import makedirs, listdir, remove
@@ -67,19 +68,21 @@ def plot3D_Matrix(x,t,y):
 'Initial set up'
 torch.manual_seed(1234)
 np.random.seed(1234)
-steps = 70000
-lr = 0.1
-layers = np.array([2,32,32,1])#50,50,20,50,50
+steps = 100000
+lr = 0.01
+layers = np.array([2,150,150,150,1])#50,50,20,50,50
 xmin, xmax = 0,1
 tmin, tmax = 0,1
-total_points_x = 200
-total_points_t = 200
-Nu, Nf = 500, 10000#? #Nu: number of training points of boundary #Nf: number of collocation points (to evaluate PDE in)
+total_points_x = 500
+total_points_t = 500
+Nu, Nf = 2000, 10000#? #Nu: number of training points of boundary #Nf: number of collocation points (to evaluate PDE in)
+
+k0 = 2*np.pi*2
 def f_real(x,t):
-    return torch.sin(4*np.pi * x[:, 0:1]) * torch.sin(4*np.pi * t[0:1, :])
+    return torch.sin(k0 * x[:, 0:1]) * torch.sin(k0 * t[0:1, :])
 'Loss Functions'
 def PDE(x):
-    return ((4*np.pi)**2)*torch.sin(4*np.pi * x[:, 0:1]) * torch.sin(4*np.pi * x[:, 1:2])
+    return (k0**2)*torch.sin(4*np.pi * x[:, 0:1]) * torch.sin(4*np.pi * x[:, 1:2])
 #Loss BC
 def lossBC(model,x_BC,y_BC):
     loss_BC=model.criterion(model.forward(x_BC),y_BC)
@@ -92,20 +95,19 @@ def lossPDE(model,x_PDE,PDE):
     f=model.forward(g)
     f_x_y = autograd.grad(f,g,torch.ones([g.shape[0], 1]).to(model.device), retain_graph=True, create_graph=True)[0] #first derivative
     f_xx_yy = autograd.grad(f_x_y,g,torch.ones(g.shape).to(model.device), create_graph=True)[0] #second derivative
-
+    
     f_xx=f_xx_yy[:,[0]]# we select the 1st element for x (the second one is t) (Remember the input X=[x,t]) 
-    f_yy=f_xx_yy[[0],:]# we select the 1st element for x (the second one is t) (Remember the input X=[x,t]) 
-
-    f=-f_yy - f_xx - ((4*np.pi)**2)*f 
+    f_yy=f_xx_yy[:,[1]]# we select the 1st element for x (the second one is t) (Remember the input X=[x,t]) 
+    f=-f_yy - f_xx - (k0**2)*f 
     return model.criterion(f,PDE(g))
 
 def loss(model,x_BC,y_BC,x_PDE,lossBC,lossPDE,PDE):
     loss_bc=lossBC(model,x_BC,y_BC)
     loss_pde=lossPDE(model,x_PDE,PDE)
-    return loss_bc+loss_pde
+    return 100*loss_bc+loss_pde
 
 'Model'
-model = FCN(layers,loss,lr=lr,scheduler='MultiStepLR',argschedu={'gamma':0.1,'milestones':[5000,15000,30000,50000]})
+model = FCN(layers,loss,lr=lr,scheduler='MultiStepLR',argschedu={'gamma':0.1,'milestones':[10000,30000,70000]})#,30000,50000]})
 
 'Gen Data'
 x=torch.linspace(xmin,xmax,total_points_x).view(-1,1)
@@ -161,24 +163,20 @@ Y_test=y_test.float().to(model.device)
 # ax.scatter(X_test[:,0],X_test[:,1],Y_test)
 # plt.show()
 
-model.Train([X_train_Nu,Y_train_Nu,X_train_Nf,lossBC,lossPDE,PDE],Verbose=True,nEpochs=steps,nLoss=5000,Test=[X_test,Y_test])
+fig, ax = model.Train([X_train_Nu,Y_train_Nu,X_train_Nf,lossBC,lossPDE,PDE],Verbose=True,nEpochs=steps,nLoss=5000,Test=[X_test,Y_test])
+name = 'Helmholtz2D'
+model.save(name)
+n = len([file.replace(name,'').replace('.model','') for file in listdir('Models') if file.startswith(name)])
 
-fig, ax = plt.subplots(1,figsize=(16,10))
-ax.plot(model.loss_history,color='b',ls='-',label='PDE')
-ax.plot(model.test_history_loss,color='g',ls='--',label='Test')
-ax.legend(title='loss type:',frameon=False,markerfirst=False,edgecolor='k',alignment='right',loc='upper right')
-ax.set_yscale('log');ax.set_ylabel('loss');ax.set_xlabel('Epochs')
-fig.savefig('HelmholtzEquationLoss.png',bbox_inches='tight')
-plt.show()
+fig.savefig(f'Figures/Images/{name}Loss{n}.png',bbox_inches='tight')
+plt.close(fig)
 y1=model(X_test)
 x1=X_test[:,0]
 t1=X_test[:,1]
-arr_x1=x1.reshape(shape=[200,200]).transpose(1,0).detach().cpu()
-arr_T1=t1.reshape(shape=[200,200]).transpose(1,0).detach().cpu()
-arr_y1=y1.reshape(shape=[200,200]).transpose(1,0).detach().cpu()
-arr_y_test=y_test.reshape(shape=[200,200]).transpose(1,0).detach().cpu()
-
-model.save('Helmoltz2D')
+arr_x1=x1.reshape(shape=[total_points_x,total_points_t]).transpose(1,0).detach().cpu()
+arr_T1=t1.reshape(shape=[total_points_x,total_points_t]).transpose(1,0).detach().cpu()
+arr_y1=y1.reshape(shape=[total_points_x,total_points_t]).transpose(1,0).detach().cpu()
+arr_y_test=y_test.reshape(shape=[total_points_x,total_points_t]).transpose(1,0).detach().cpu()
 
 # plot3D_Matrix(arr_x1,arr_T1,arr_y1)
 
@@ -189,4 +187,9 @@ ax.scatter(X_train_Nu[:,0],X_train_Nu[:,1],Y_train_Nu,color='k')
 ax.set_xlabel('t')
 ax.set_ylabel('x')
 ax.set_zlabel('f(x,t)')
-plt.show()
+fig = plt.gcf()
+
+with open(f'Figures/Instances/{name}{n}.pkl','wb') as file:
+    pkl.dump(fig,file)
+
+plt.close()

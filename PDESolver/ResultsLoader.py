@@ -7,6 +7,8 @@ except:pass
 import torch
 from torch import autograd
 from pyDOE import lhs  
+import pickle as pkl
+from os import listdir
 
 'Initial set up'
 torch.manual_seed(1234)
@@ -48,7 +50,6 @@ def loss(model,x_BC,y_BC,x_PDE,lossBC,lossPDE,PDE):
     loss_pde=lossPDE(model,x_PDE,PDE)
     return loss_bc+loss_pde
 
-model = torch.load('Models/Helmoltz2D.model')
 
 'Gen Data'
 x=torch.linspace(xmin,xmax,total_points_x).view(-1,1)
@@ -81,38 +82,46 @@ top_Y=torch.zeros(top_X.shape[0],1)
 #Get all the training data into the same dataset
 X_train=torch.vstack([left_X,right_X,bottom_X,top_X])
 Y_train=torch.vstack([left_Y,right_Y,bottom_Y,top_Y])
+name = 'Helmholtz2D'
 
-#Choose(Nu) points of our available training data:
-idx=np.random.choice(X_train.shape[0],Nu,replace=False)
-X_train_Nu=X_train[idx,:].float().to(model.device)
-Y_train_Nu=Y_train[idx,:].float().to(model.device)
-# Collocation Points (Evaluate our PDe)
-#Choose(Nf) points(Latin hypercube)
-X_train_Nf=lb+(ub-lb)*lhs(2,Nf) # 2 as the inputs are x and t
-X_train_Nf=torch.vstack((X_train_Nf,X_train_Nu)).float().to(model.device) #Add the training poinst to the collocation points
-X_test=x_test.float().to(model.device) # the input dataset (complete)
-Y_test=y_test.float().to(model.device)
+for file in listdir('Models'):
+    if file.startswith(f'{name}'):
+        n = file.replace(f'{name}','').replace('.model','')
 
-fig, ax = plt.subplots(1,figsize=(16,10))
-ax.plot(model.loss_history,color='b',ls='-',label='PDE')
-ax.plot(model.test_history_loss,color='g',ls='--',label='Test')
-ax.legend(title='loss type:',frameon=False,markerfirst=False,edgecolor='k',alignment='right',loc='upper right')
-ax.set_yscale('log');ax.set_ylabel('loss');ax.set_xlabel('Epochs')
-fig.savefig('HelmholtzEquationLoss.png',bbox_inches='tight')
-plt.show()
-y1=model(X_test)
-x1=X_test[:,0]
-t1=X_test[:,1]
-arr_x1=x1.reshape(shape=[200,200]).transpose(1,0).detach().cpu()
-arr_T1=t1.reshape(shape=[200,200]).transpose(1,0).detach().cpu()
-arr_y1=y1.reshape(shape=[200,200]).transpose(1,0).detach().cpu()
-arr_y_test=y_test.reshape(shape=[200,200]).transpose(1,0).detach().cpu()
+        model = torch.load(f'Models/{name}{n}.model')
 
-ax = plt.axes(projection='3d')
-ax.plot_surface(arr_T1.numpy(), arr_x1.numpy(), arr_y1.numpy(),cmap="rainbow")
-ax.plot_surface(arr_T1.numpy(), arr_x1.numpy(), arr_y_test.numpy(),color='k')
-ax.scatter(X_train_Nu[:,0],X_train_Nu[:,1],Y_train_Nu,color='k')
-ax.set_xlabel('t')
-ax.set_ylabel('x')
-ax.set_zlabel('f(x,t)')
-plt.show()
+        #Choose(Nu) points of our available training data:
+        idx=np.random.choice(X_train.shape[0],Nu,replace=False)
+        X_train_Nu=X_train[idx,:].float().to(model.device)
+        Y_train_Nu=Y_train[idx,:].float().to(model.device)
+        # Collocation Points (Evaluate our PDe)
+        #Choose(Nf) points(Latin hypercube)
+        X_train_Nf=lb+(ub-lb)*lhs(2,Nf) # 2 as the inputs are x and t
+        X_train_Nf=torch.vstack((X_train_Nf,X_train_Nu)).float().to(model.device) #Add the training poinst to the collocation points
+        X_test=x_test.float().to(model.device) # the input dataset (complete)
+        Y_test=y_test.float().to(model.device)
+
+
+        fig, ax = model.PlotHistory()
+        fig.savefig(f'Figures/Images/{name}Loss{n}.png',bbox_inches='tight')
+        plt.close()
+        y1=model(X_test)
+        x1=X_test[:,0]
+        t1=X_test[:,1]
+        arr_x1=x1.reshape(shape=[200,200]).transpose(1,0).detach().cpu()
+        arr_T1=t1.reshape(shape=[200,200]).transpose(1,0).detach().cpu()
+        arr_y1=y1.reshape(shape=[200,200]).transpose(1,0).detach().cpu()
+        arr_y_test=y_test.reshape(shape=[200,200]).transpose(1,0).detach().cpu()
+
+        ax = plt.axes(projection='3d')
+        ax.plot_surface(arr_T1.numpy(), arr_x1.numpy(), arr_y1.numpy(),cmap="rainbow")
+        ax.plot_surface(arr_T1.numpy(), arr_x1.numpy(), arr_y_test.numpy(),color='k')
+        ax.scatter(X_train_Nu[:,0],X_train_Nu[:,1],Y_train_Nu,color='k')
+        ax.set_xlabel('t')
+        ax.set_ylabel('x')
+        ax.set_zlabel('f(x,t)')
+        fig = plt.gcf()
+
+        with open(f'Figures/Instances/{name}{n}.pkl','wb') as file:
+            pkl.dump(fig,file)
+        plt.close()

@@ -81,11 +81,12 @@ class FCN(nn.Module):
     def loss(self,args):
         return self.loss_function(self,*args)
 
-    def Train(self,lossargs,nEpochs=100,BatchSize=None,history=True,Verbose=False,nLoss=1000,pScheduler=True,Test=[None,None]):
+    def Train(self,lossargs,nEpochs=100,BatchSize=None,history=True,Verbose=False,nLoss=1000,pScheduler=True,Test=[None,None],nTest=10,PH=True):
         if history:
             self.loss_history = []
             if Test[0] is not None and Test[1] is not None:
                 self.test_history_loss = []
+                self.test_history_iter = []
         if self.scheduler is not None: 
             self.schhist=None
         iterator = range(nEpochs)
@@ -105,16 +106,28 @@ class FCN(nn.Module):
                 print(f'\nloss at iteration {n}: {Loss:.3e}')
             if history:
                 self.loss_history.append(Loss.detach().cpu().numpy())
-                if Test[0] is not None and Test[1] is not None:
+                if Test[0] is not None and Test[1] is not None and n%nTest==0:
                     # try:
+                        self.test_history_iter.append(n)
                         self.test_history_loss.append(self.criterion(self.forward(Test[0]),Test[1]).detach().cpu().numpy())
+        if PH:
+            return self.PlotHistory()
                     # except:pass
+
+    def PlotHistory(self):
+        fig, ax = plt.subplots(1,figsize=(16,10))
+        ax.plot(self.loss_history,color='b',ls='-',label='PDE')
+        try:ax.plot(self.test_history_iter,self.test_history_loss,color='g',ls='--',label='Test')
+        except:pass
+        ax.legend(title='loss type:',frameon=False,markerfirst=False,edgecolor='k',alignment='right',loc='upper right')
+        ax.set_yscale('log');ax.set_ylabel('loss');ax.set_xlabel('Epochs')
+        return fig, ax
 
     def save(self,name):
         if not exists('Models'):
             makedirs('Models')
         print(name)
-        otherm = [int(file.replace(name,'').replace('.model','')) for file in listdir('Models') if file.startswith(name)]
+        otherm = [file.replace(name,'').replace('.model','') for file in listdir('Models') if file.startswith(name)]
         if len(otherm)>0:name+=str(len(otherm))
         torch.save(self,f'Models/{name}.model')
 
