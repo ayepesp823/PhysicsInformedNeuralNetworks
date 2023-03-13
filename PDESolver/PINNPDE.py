@@ -33,19 +33,34 @@ except:pass
 
 class FCN(nn.Module):
     #?Neural Network
-    def __init__(self,layers,loss_function,activation=nn.Tanh(),lr=0.5,criterion=nn.MSELoss(reduction ='mean'),optimizer='Adam',scheduler=None,argsoptim={},argschedu={}):
-        super().__init__() #call __init__ from parent class 
+    def __init__(self,layers,ResPDE:callable,HardConstrain=None,activation=nn.Tanh(),lr=0.5,criterion=nn.MSELoss(reduction ='mean'),
+                    optimizer='Adam',scheduler=None,argsoptim={},argschedu={}):
+        super().__init__() #? call __init__ from parent class 
+
         'activation function'
-        self.activation = activation
-        'criterion'#? used for estimation of each individual loss (PDE and BC)
-        self.criterion = criterion#? this one computes loss using the estimated curve
-        'loss function'#? used for estimation of general loss (PDE+BC)
-        self.loss_function = loss_function
+        self.activation = activation#? activation function applied after each layer
+
+        'criterion'#? used for computing the loss out of the residuals estimated
+        self.criterion = criterion#? for forward(input) and predicted output
+
+        'hard constrain'#? used for imposing boundary conditions
+        if HardConstrain is not None and callable(HardConstrain):
+            self.HardConstrain = HardConstrain
+        else:
+            self.HardConstrain = None
+            print(f'Argument HardConstrain set to type: {type(HardConstrain)}, expected type function')
+        
+        'Function to compute residuals of the PDE'
+        self.ResPDE = ResPDE
+
         'Initialise neural network as a list using nn.Modulelist'  
         self.layers = layers
-        self.linears = nn.ModuleList([nn.Linear(self.layers[i], self.layers[i+1]) for i in range(len(self.layers)-1)]) 
+        self.linears = nn.ModuleList([nn.Linear(self.layers[i], self.layers[i+1]) for i in range(len(self.layers)-1)])#? construction of the network
         self.iter = 0
+
+        'device to be used for training'
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
         'Xavier Normal Initialization'
         # std = gain * sqrt(2/(input_dim+output_dim))
         for i in range(len(self.layers)-1):
@@ -57,19 +72,25 @@ class FCN(nn.Module):
             # set biases to zero
             nn.init.zeros_(self.linears[i].bias.data)   
         self.to(self.device)
+
+        'optimizer selection'
         try:
             self.optimizer = getattr(torch.optim, optimizer)(self.parameters(), lr=lr, **argsoptim)
         except:
             self.optimizer = torch.optim.Adam(self.parameters(),lr=lr,**argsoptim)
             print(f'\nOptimizer "{optimizer}" was not found, Adam was used instead\n')
+        
+        'learning rate scheduler selections'#? if wanted, the code can implement a learning rate scheduler
         try:
             self.scheduler = getattr(torch.optim.lr_scheduler,scheduler)
         except:
             self.scheduler = None
             if scheduler is not None:print(f'Learning Rate Scheduler "{scheduler}" was not found. Ingoring option.')
         if self.scheduler is not None:self.scheduler = self.scheduler(self.optimizer,**argschedu)
+    
     'foward pass'
     def forward(self,x):
+        'this function computes the output of the neural network'
         if torch.is_tensor(x) != True:         
             x = torch.from_numpy(x)                
         a = x.float()
@@ -77,23 +98,103 @@ class FCN(nn.Module):
             z = self.linears[i](a)              
             a = self.activation(z)    
         a = self.linears[-1](a)
+        if self.HardConstrain is not None:
+            a = self.HardConstrain(x,a)#? optional step to impose boundary conditions
         return a
-    def loss(self,args):
-        return self.loss_function(self,*args)
 
-    def Train(self,lossargs,nEpochs=100,BatchSize=None,history=True,Verbose=False,nLoss=1000,pScheduler=True,Test=[None,None],nTest=10,PH=True):
+    def lossBD(self,Xbd,Ybd):
+        """
+        This function computed the loss generated due to boundary conditions
+
+        Args:
+            Xbd (_type_): collocation points in the boundary.
+            Ybd (_type_): expected output for boundary points.
+
+        Returns:
+            lossBD (_type_): loss due to the boundary collocation points output estimation.
+        """
+        return self.criterion(self.forward(Xbd),Ybd)
+
+    def lossPDE(self,Xpde):
+        """
+        This function computes the loss generated due to collocation points,
+        (aka points inside the regimen for computing the PDE). It used the
+        residuals of the PDE so it is asummed for the exact solution f that:
+        PDE(f,x)=0
+
+        Args:
+            Xpde (_type_): Collocation points
+
+        Returns:
+            lossPDE (_type_): loss due to the collocation points output estimation.
+        """
+        XpdeC = Xpde.clone()
+        XpdeC.requires_grad = True
+        f_hat = torch.zeros(Xpde.shape[0],1).to(self.device)
+        f_est = self.ResPDE(XpdeC,self.forward(XpdeC))
+        return self.criterion(f_est,f_hat)
+
+    def loss(self,Xpde,Xbd=None,Ybd=None,weight=1.):
+        """
+        this function computes the total loss for the PDE solution estimation problem,
+        it takes into account the loss generated by
+
+        Args:
+            Xpde (_type_): collocation points.
+            Xbd (torch.tensor, optional): Points in boundary. Defaults to None.
+            Ybd (torch.tensor, optional): Expected output for boundary. Defaults to None.
+            weight (float, optional): _description_. Defaults to 1.
+
+        Returns:
+            total_loss (_type_): lossPDE or weight*lossBD + lossPDE.
+        """
+        total_loss = self.lossPDE(Xpde)
+        if self.HardConstrain is None and Xbd is not None:
+            total_loss += weight*self.lossBD(Xbd,Ybd)
+        return total_loss
+    
+
+    def Train(self,Xpde,Xbd=None,Ybd=None,weight=1,nEpochs=100,BatchSize=None,history=True,Verbose=False,nLoss=1000,pScheduler=False,
+                Test=[None,None],nTest=10,PH=True):
+        """_summary_
+
+        Args:
+            Xpde (_type_): collocation points.
+            Xbd (torch.tensor, optional): Points in boundary. Defaults to None.
+            Ybd (torch.tensor, optional): Expected output for boundary. Defaults to None.
+            weight (float, optional): _description_. Defaults to 1.
+            nEpochs (int, optional): number of epochs to train. Defaults to 100.
+            BatchSize (_type_, optional): _description_. Defaults to None.
+            history (bool, optional): compute history of the training. Defaults to True.
+            Verbose (bool, optional): show training history in prompt. Defaults to False.
+            nLoss (int, optional): how many iterations to wait for printing loss in prompt. Defaults to 1000.
+            pScheduler (bool, optional): store scheduler history for later plotting. Defaults to False.
+            Test (list, optional): [x_test,y_test] values to compute loss relative exact solutions (if known). Defaults to [None,None].
+            nTest (int, optional): how many iterations to wait for computing test loss. Defaults to 10.
+            PH (bool, optional): plot loss history. Defaults to True.
+
+        Returns:
+            _type_: _description_
+        """
+        if self.HardConstrain is None and Xbd is None:
+            print('No boundary conditions implemented.')
+        if Xbd is not None and Ybd is None:
+            print('Asuming boundary condition set to 0.')
+            Ybd = torch.zeros(Xbd.shape[0],1).to(self.device)
         if history:
-            self.loss_history = []
+            self.total_loss_history = []
+            self.pde_loss_history = []
+            self.bd_loss_history = []
             if Test[0] is not None and Test[1] is not None:
                 self.test_history_loss = []
                 self.test_history_iter = []
         if self.scheduler is not None: 
             self.schhist=None
         iterator = range(nEpochs)
-        if Verbose: iterator = tqdm(iterator)
+        if Verbose: iterator = tqdm(iterator, bar_format='{desc}: {percentage:6.2f}% |{bar}{r_bar}')
         for n in iterator:
             self.optimizer.zero_grad()
-            Loss = self.loss(lossargs)
+            Loss = self.loss(Xpde,Xbd,Ybd,weight)
             Loss.backward()
             self.optimizer.step()
             if self.scheduler is not None: 
@@ -105,21 +206,44 @@ class FCN(nn.Module):
             if Verbose and n%nLoss==0:
                 print(f'\nloss at iteration {n}: {Loss:.3e}')
             if history:
-                self.loss_history.append(Loss.detach().cpu().numpy())
+                self.total_loss_history.append(Loss.detach().cpu().numpy())
+                if self.HardConstrain is None and Xbd is not None:
+                    self.pde_loss_history.append(self.lossPDE(Xpde).detach().cpu().numpy())
+                    self.bd_loss_history.append(weight*self.lossBD(Xbd,Ybd).detach().cpu().numpy())
+
                 if Test[0] is not None and Test[1] is not None and n%nTest==0:
                     # try:
                         self.test_history_iter.append(n)
                         self.test_history_loss.append(self.criterion(self.forward(Test[0]),Test[1]).detach().cpu().numpy())
         if PH:
-            return self.PlotHistory()
+            return self.PlotHistory(pScheduler)
                     # except:pass
 
-    def PlotHistory(self):
+    def PlotHistory(self,pScheduler=False):
         fig, ax = plt.subplots(1,figsize=(16,10))
-        ax.plot(self.loss_history,color='b',ls='-',label='PDE')
-        try:ax.plot(self.test_history_iter,self.test_history_loss,color='g',ls='--',label='Test')
+        if pScheduler:
+            # try:
+                lrp = ax.plot(self.schhist,color='k',ls=':',alpha=0.7)
+                legend1 = plt.legend(lrp,['Learning rate'],loc='lower left')
+                ax.add_artist(legend1)
+                legend1.get_frame().set_alpha(None)
+                legend1.get_frame().set_facecolor((1, 0, 0, 0.1))
+            # except:pass
+        
+        total = ax.plot(self.total_loss_history,color='m',ls='-',label='Total')
+        legends = total
+        if len(self.pde_loss_history)>0:
+            pde = ax.plot(self.pde_loss_history,color='b',ls='-',label='PDE')
+            bd = ax.plot(self.bd_loss_history,color='r',ls='-',label='BD')
+            legends+=pde;legends+=bd
+        try:test = ax.plot(self.test_history_iter,self.test_history_loss,color='g',ls='--',label='Test');legends+=test
         except:pass
-        ax.legend(title='loss type:',frameon=False,markerfirst=False,edgecolor='k',alignment='right',loc='upper right')
+        labs = [curve.get_label() for curve in legends]
+        legend2 = plt.legend(legends,labs,title='Loss Type:',markerfirst=False,edgecolor='k',alignment='right',loc='upper right',title_fontsize=12)
+
+        legend2.get_frame().set_alpha(None)
+        legend2.get_frame().set_facecolor((0, 0, 0, 0.0))
+        ax.add_artist(legend2)
         ax.set_yscale('log');ax.set_ylabel('loss');ax.set_xlabel('Epochs')
         return fig, ax
 

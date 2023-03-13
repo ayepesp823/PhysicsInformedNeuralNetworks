@@ -68,7 +68,7 @@ def plot3D_Matrix(x,t,y):
 'Initial set up'
 torch.manual_seed(1234)
 np.random.seed(1234)
-steps = 100
+steps = 15000
 lr = 0.01
 layers = np.array([2,150,150,150,1])#50,50,20,50,50
 xmin, xmax = 0,1
@@ -80,6 +80,7 @@ Nu, Nf = 2000, 10000#? #Nu: number of training points of boundary #Nf: number of
 k0 = 2*np.pi*2
 def f_real(x,t):
     return torch.sin(k0 * x[:, 0:1]) * torch.sin(k0 * t[0:1, :])
+
 'Loss Function'
 def ResPDE(Xpde,Fcomp):
     f_x_y = autograd.grad(Fcomp,Xpde,torch.ones([Xpde.shape[0], 1]).to(model.device), retain_graph=True, create_graph=True)[0] #first derivative
@@ -90,8 +91,13 @@ def ResPDE(Xpde,Fcomp):
     f=-f_yy - f_xx - (k0**2)*Fcomp - (k0**2)*torch.sin(4*np.pi * Xpde[:, 0:1]) * torch.sin(4*np.pi * Xpde[:, 1:2])
     return f
 
+def transform(x, y):
+    res = x[:, 0:1] * (1 - x[:, 0:1]) * x[:, 1:2] * (1 - x[:, 1:2])
+    return res * y
+
+
 'Model'
-model = FCN(layers,ResPDE,lr=lr,scheduler='MultiStepLR',argschedu={'gamma':0.1,'milestones':[500]})#,30000,50000]})
+model = FCN(layers,ResPDE,transform,lr=lr,scheduler='MultiStepLR',argschedu={'gamma':0.1,'milestones':[1000,7500]})#,30000,50000]})
 
 'Gen Data'
 x=torch.linspace(xmin,xmax,total_points_x).view(-1,1)
@@ -147,12 +153,13 @@ Y_test=y_test.float().to(model.device)
 # ax.scatter(X_test[:,0],X_test[:,1],Y_test)
 # plt.show()
 
-fig, ax = model.Train(X_train_Nf,X_train_Nu,Verbose=True,nEpochs=steps,nLoss=100,Test=[X_test,Y_test],pScheduler=True)
-name = 'Helmholtz2D'
+fig, ax = model.Train(X_train_Nf,Verbose=True,nEpochs=steps,nLoss=1500,Test=[X_test,Y_test],pScheduler=True)
+name = 'Helmholtz2DHC'
 model.save(name)
 n = len([file.replace(name,'').replace('.model','') for file in listdir('Models') if file.startswith(name)])
 
 fig.savefig(f'Figures/Images/{name}Loss{n}.png',bbox_inches='tight')
+plt.draw();plt.pause(20)
 plt.close(fig)
 y1=model(X_test)
 x1=X_test[:,0]
@@ -175,5 +182,5 @@ fig = plt.gcf()
 
 with open(f'Figures/Instances/{name}{n}.pkl','wb') as file:
     pkl.dump(fig,file)
-
+plt.draw();plt.pause(20)
 plt.close()
