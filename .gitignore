@@ -3,3 +3,7 @@
 *.model
 *.pkl
 *.pyc
+*.zip
+*.rar
+*.tar*
+*.mat
