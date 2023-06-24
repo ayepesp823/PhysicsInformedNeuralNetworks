@@ -94,9 +94,10 @@ class FCN(nn.Module):
         self.to(self.device)
 
         'Initialize best loss'
-        self.best_valid_loss = float('inf')
+        self.best_valid_loss = float('inf');self.best_loss_it = 0
 
         'optimizer selection'
+        
         try:
             self.optimizer = getattr(torch.optim, optimizer)(self.parameters(), lr=lr, **argsoptim)
         except:
@@ -247,12 +248,12 @@ class FCN(nn.Module):
             except:
                 Loss = self.closure()
                 self.optimizer.step()
-            if n==0:self.last_valid_loss=Loss.detach().cpu().numpy()
-            if SB and Loss.detach().cpu().numpy()<self.best_valid_loss:
-                self.best_valid_loss = Loss.detach().cpu().numpy();self.best_loss_it = n+1
-                if Verbose and n>2*maxepochs and (self.best_valid_loss/self.last_valid_loss<0.7 or self.best_loss_it-self.last_loss_it>0.5*maxepochs):
-                    print(f"\nBest validation loss: {self.best_valid_loss:.3e}");self.last_valid_loss=self.best_valid_loss;self.last_loss_it=self.best_loss_it
-                    print(f"Obtained at epoch: {self.best_loss_it}\n")
+            if SB and Loss.detach().cpu().numpy()<self.best_valid_loss and Loss.detach().cpu().numpy()>1e-15:
+                self.best_valid_loss = Loss.detach().cpu().numpy()
+                self.best_loss_it = n+1
+                # if Verbose and n>2*maxepochs:
+                #     print(f"\nBest validation loss: {self.best_valid_loss:.3e}")
+                #     print(f"\nSaving best model for epoch: {n+1}\n")
                 torch.save(self.state_dict(),f'Models/{self.name}/Best/StateDict_{self.n}.model')
 
             if self.scheduler is not None: 
@@ -262,7 +263,7 @@ class FCN(nn.Module):
                 try:self.scheduler.step()
                 except:self.scheduler.step(Loss)
             if Verbose and n%nLoss==0:
-                print(f'\nloss at iteration {n}: {Loss:.3e}\n')
+                print(f'\nloss at iteration {n}: {Loss:.3e}\nCurrent best loss: {self.best_valid_loss:.3E}')
             self.loss_history['total_loss'].append(Loss.detach().cpu().numpy())
             if self.numcdt>0:
                 loss_pde = self.lossPDE(self.train_Xpde)#.detach().cpu().numpy()
@@ -290,14 +291,13 @@ class FCN(nn.Module):
                     self.loss_history['test_iter'].append(n)
                     self.loss_history['test_loss'].append(self.criterion(self.forward(Test[0]),Test[1]).detach().cpu().numpy())
             
-            if n>0.2*nEpochs and RE and ((Loss<1e-4 and np.std(self.loss_history['total_loss'][-int(maxepochs):])/np.mean(self.loss_history['total_loss'][-int(maxepochs):])<1e-3) or np.std(self.loss_history['total_loss'][-int(1.5*maxepochs):])/np.std(self.loss_history['total_loss'][-int(1.5*maxepochs):])<5e-5):
-                print(f'Model already converged at epoch: {n+1}, breaking trainning.')
+            if n>0.2*nEpochs and RE and ((Loss<1e-4 and np.std(self.loss_history['total_loss'][-int(maxepochs):])/np.mean(self.loss_history['total_loss'][-int(maxepochs):])<1e-3) or np.std(self.loss_history['total_loss'][-int(1.5*maxepochs):])/np.mean(self.loss_history['total_loss'][-int(1.5*maxepochs):])<1e-4):
+                print(f'Model already converged at epoch: {n}, breaking trainning.')
                 print(f'Last Loss: {Loss:.3e}')
                 print(f'Std of last {int(maxepochs)} Loss: {np.std(self.loss_history["total_loss"][-int(maxepochs):]):.3e}')
                 print(f'Std of last {int(1.5*maxepochs)} Loss: {np.std(self.loss_history["total_loss"][-int(1.5*maxepochs):]):.3e}')
                 break
         self.time = time()-t0
-        print(f"\nBest validation loss: {self.best_valid_loss:.3e}; Obtained at iteration: {self.best_loss_it}")
         if PH:
             return self.PlotHistory(pScheduler,SH=SH)
                     # except:pass
@@ -393,7 +393,6 @@ class FCN(nn.Module):
     def save(self):
         if not exists('Models'):
             makedirs('Models')
-        print(self.name)
         torch.save(self,f'Models/{self.name}/Final/Trained_{self.n}.model')
 
 
